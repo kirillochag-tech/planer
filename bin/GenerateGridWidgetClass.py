@@ -293,7 +293,7 @@ class GenerateWidgets(QObject):
         # DataFrame с данными
         data = Get_Data.get_data(self.root.tabs,
                                  self.active_tab_index, 
-                                 manager_filter=manager_filter)
+                                 manager_filter=manager_filter, historical_date=self.historical_date)
         if data.empty:
             return
         
@@ -477,7 +477,7 @@ class GenerateWidgets(QObject):
         """
         data = Get_Data.get_data(self.root.tabs, 
                                  self.active_tab_index,
-                                 manager_filter=manager_filter)
+                                 manager_filter=manager_filter, historical_date=self.historical_date)
         if data.empty:
             return
     
@@ -638,7 +638,7 @@ class GenerateWidgets(QObject):
 
         data = Get_Data.get_data(self.root.tabs,
                                  self.active_tab_index, 
-                                 cut_manager=cut_manager)
+                                 cut_manager=cut_manager, historical_date=self.historical_date)
 
         # Получаем порядок колонок для текущей вкладки
         column_order = self.column_manager.get_column_order(self.active_tab_index)
