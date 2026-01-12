@@ -8,20 +8,22 @@ Created on Tue Jul 22 20:35:25 2025
 import os
 import pandas as pd
 import configparser
-from datetime import datetime 
+from datetime import datetime, date
 from PySide6.QtCore import Signal as QtSignal, Qt, QLocale
 from PySide6.QtCore import QTimer,  QObject
-from PySide6.QtGui import  QAction, QPixmap, QPainter, QPageLayout
+from PySide6.QtGui import  QAction, QPixmap, QPainter, QPageLayout, QIcon
 from PySide6.QtPrintSupport import QPrinter, QPrintDialog
-from PySide6.QtWidgets import QWidget, QLabel, QPushButton, QGridLayout, QMenu
-from PySide6.QtWidgets import QSizePolicy, QApplication, QScrollArea
-from PySide6.QtWidgets import  QVBoxLayout, QMessageBox, QDialog
+from PySide6.QtWidgets import (QWidget, QLabel, QPushButton, QGridLayout, QMenu,
+                               QSizePolicy, QApplication, QScrollArea, QVBoxLayout, 
+                               QMessageBox, QDialog, QHBoxLayout, QDateEdit)
 from bin import constant as const_
 from bin.helpers import FileWatcherHelper
 from bin.export_excel import export_full_dashboard
 from bin.get_data import Get_Data
 from bin.get_data import Get_Files
 from bin.column_manager import ColumnLayout
+from bin.database_manager import DatabaseManager
+from bin.history_converter import history_converter
 
 
 class GenerateWidgets(QObject):
@@ -109,6 +111,11 @@ class GenerateWidgets(QObject):
             network_dir=network_dir
         )
 
+        # === Инициализация базы данных ===
+        self.db_manager = DatabaseManager()
+        self.historical_date = None  # Текущая дата истории (None = текущие данные)
+        self.original_refresh_timer_state = True  # Состояние таймера до включения истории
+        
         self._start_auto_refresh_timer()
         self._check_and_refresh_files()
         self.widgets = {}
@@ -736,21 +743,42 @@ class GenerateWidgets(QObject):
         
         # ← берём из состояния
         cut_manager = self.filtered_cut_manager  
-        if self.active_tab_index in [1, 5]:
-            self.add_obj_brand_manager(
-                manager_filter=self.filtered_brand_manager)
-            stretch_cell = 1.5
-            
-        elif self.active_tab_index == 2:
-            self.add_obj_brand_manager_farban(
-                manager_filter=self.filtered_brand_manager_farban)
-            stretch_cell = 1.5
+        
+        # Проверяем, есть ли исторические данные для отображения
+        if self.historical_date:
+            # Используем исторические данные
+            if self.active_tab_index in [1, 5]:
+                self.add_obj_brand_manager(
+                    manager_filter=self.filtered_brand_manager)
+                stretch_cell = 1.5
+                
+            elif self.active_tab_index == 2:
+                self.add_obj_brand_manager_farban(
+                    manager_filter=self.filtered_brand_manager_farban)
+                stretch_cell = 1.5
 
-        elif self.active_tab_index in [0, 4]:
-            self.add_obj_manager(cut_manager)
-            stretch_cell = 2
+            elif self.active_tab_index in [0, 4]:
+                self.add_obj_manager(cut_manager)
+                stretch_cell = 2
+            else:
+                return
         else:
-            return
+            # Используем текущие данные из файлов
+            if self.active_tab_index in [1, 5]:
+                self.add_obj_brand_manager(
+                    manager_filter=self.filtered_brand_manager)
+                stretch_cell = 1.5
+                
+            elif self.active_tab_index == 2:
+                self.add_obj_brand_manager_farban(
+                    manager_filter=self.filtered_brand_manager_farban)
+                stretch_cell = 1.5
+
+            elif self.active_tab_index in [0, 4]:
+                self.add_obj_manager(cut_manager)
+                stretch_cell = 2
+            else:
+                return
  
         # Устанавливаем layout для текущей вкладки
         # --- Обёртка в QScrollArea ---
