@@ -88,47 +88,84 @@ class DatabaseScript:
     
     def _initialize_database(self):
         """
-        Инициализация структуры базы данных
+        Инициализация структуры базы данных.
         
-        Создает таблицы для хранения данных о продажах, менеджерах и других метаданных
+        Создает таблицы для хранения исторических данных о продажах и справочника менеджеров,
+        в соответствии с требованиями клиентского приложения DatabaseManager.
         """
         conn = sqlite3.connect(self.DB_PATH)
         cursor = conn.cursor()
         
-        # Таблица для хранения данных о продажах
+        # Таблиц --- for storing manager information (reference table)
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS sales_data (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                manager_id TEXT NOT NULL,
-                manager_name TEXT NOT NULL,
-                date DATETIME NOT NULL,
-                product_category TEXT,
-                plan REAL,
-                fact REAL,
-                percent REAL,
-                status TEXT,
-                data_type TEXT,
-                raw_data TEXT
-            )
+        CREATE TABLE IF NOT EXISTS managers (
+            id TEXT PRIMARY KEY,
+            current_name TEXT NOT NULL,
+            department TEXT,
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+        );
         ''')
         
-        # Таблица для хранения информации о менеджерах
+        # Таблица для хранения исторических данных о продажах
         cursor.execute('''
-            CREATE TABLE IF NOT EXISTS managers (
-                id TEXT PRIMARY KEY,
-                name TEXT NOT NULL,
-                department TEXT,
-                created_date DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
+        CREATE TABLE IF NOT EXISTS sales_data (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            record_date TEXT NOT NULL, -- YYYY-MM-DD
+            manager_id TEXT NOT NULL,
+            tab_type TEXT NOT NULL, -- e.g., 'managers_26bk', 'brand_managers_26bk'
+            tab_index INTEGER NOT NULL DEFAULT 0,
+            data_type TEXT NOT NULL DEFAULT 'manager', -- 'manager' or 'group'
+            
+            -- Financial metrics for regular managers
+            money_plan REAL,
+            money_fact REAL,
+            money_percent REAL,
+            
+            margin_plan REAL,
+            margin_fact REAL,
+            margin_percent REAL,
+            
+            realization_plan REAL,
+            realization_fact REAL,
+            realization_percent REAL,
+            
+            -- Metrics for Brand Managers (OP/Home)
+            bm_plan REAL,
+            bm_fact REAL,
+            bm_percent REAL,
+            
+            -- Metrics for Farban Brand Managers
+            farban_sales_plan REAL,
+            farban_sales_fact REAL,
+            farban_sales_percent REAL,
+            
+            farban_weight_plan REAL,
+            farban_weight_fact REAL,
+            farban_weight_percent REAL,
+            
+            -- Special Groups
+            special_group TEXT,
+            special_group_plan REAL,
+            special_group_fact REAL,
+            special_group_percent REAL,
+            
+            -- Additional fields
+            group_name TEXT,
+            target_percent REAL,
+            
+            -- Metadata
+            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+            
+            -- Foreign key relationship (enforced at application level)
+            FOREIGN KEY (manager_id) REFERENCES managers(id)
+        );
         ''')
         
-        # Таблица для хранения дат с данными
-        cursor.execute('''
-            CREATE TABLE IF NOT EXISTS data_dates (
-                date DATETIME PRIMARY KEY,
-                processed_at DATETIME DEFAULT CURRENT_TIMESTAMP
-            )
-        ''')
+        # Создание индексов для ускорения запросов
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_sales_record_date ON sales_data(record_date);')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_sales_manager_id ON sales_data(manager_id);')
+        cursor.execute('CREATE INDEX IF NOT EXISTS idx_sales_tab_type ON sales_data(tab_type);')
         
         conn.commit()
         conn.close()
@@ -240,44 +277,57 @@ class DatabaseScript:
             Список словарей с данными о продажах
         """
         sales_data = []
+        encodings_to_try = ['utf-8', 'cp1251']
+        lines = None
+        
+        # Пробуем разные кодировки
+        for encoding in encodings_to_try:
+            try:
+                with open(file_path, 'r', encoding=encoding) as file:
+                    lines = file.readlines()
+                print(f"Файл {file_path} успешно прочитан в кодировке {encoding}")
+                break
+            except UnicodeDecodeError:
+                continue
+        
+        if lines is None:
+            print(f"Не удалось определить кодировку для файла {file_path}. Поддерживаемые кодировки: {encodings_to_try}")
+            return sales_data
         
         try:
-            with open(file_path, 'r', encoding='utf-8') as file:
-                lines = file.readlines()
+            # Предполагаем, что первая строка содержит заголовки
+            headers = [h.strip() for h in lines[0].split('\t')] if len(lines) > 0 else []
+            
+            for i in range(1, len(lines)):
+                values = [v.strip() for v in lines[i].split('\t')]
                 
-                # Предполагаем, что первая строка содержит заголовки
-                headers = [h.strip() for h in lines[0].split('\t')] if len(lines) > 0 else []
-                
-                for i in range(1, len(lines)):
-                    values = [v.strip() for v in lines[i].split('\t')]
+                if len(values) >= len(headers):
+                    # Создаем словарь из значений
+                    record = {}
+                    for j, header in enumerate(headers):
+                        record[header] = values[j] if j < len(values) else ""
                     
-                    if len(values) >= len(headers):
-                        # Создаем словарь из значений
-                        record = {}
-                        for j, header in enumerate(headers):
-                            record[header] = values[j] if j < len(values) else ""
-                        
-                        # Преобразуем в формат, подходящий для базы данных
-                        manager_id = record.get('manager_id', f"{data_type}_{i}")
-                        manager_name = record.get('manager_name', record.get('name', f"Manager_{i}"))
-                        product = record.get('product', '')
-                        plan = float(record.get('plan', 0))
-                        fact = float(record.get('fact', 0))
-                        percent = (fact / plan * 100) if plan != 0 else 0
-                        
-                        sales_data.append({
-                            'manager_id': manager_id,
-                            'manager_name': manager_name,
-                            'date': date,
-                            'product_category': product,
-                            'plan': plan,
-                            'fact': fact,
-                            'percent': percent,
-                            'status': self._get_status_by_percent(percent),
-                            'data_type': data_type
-                        })
+                    # Преобразуем в формат, подходящий для базы данных
+                    manager_id = record.get('manager_id', f"{data_type}_{i}")
+                    manager_name = record.get('manager_name', record.get('name', f"Manager_{i}"))
+                    product = record.get('product', '')
+                    plan = float(record.get('plan', 0))
+                    fact = float(record.get('fact', 0))
+                    percent = (fact / plan * 100) if plan != 0 else 0
+                    
+                    sales_data.append({
+                        'manager_id': manager_id,
+                        'manager_name': manager_name,
+                        'date': date,
+                        'product_category': product,
+                        'plan': plan,
+                        'fact': fact,
+                        'percent': percent,
+                        'status': self._get_status_by_percent(percent),
+                        'data_type': data_type
+                    })
         except Exception as e:
-            print(f"Ошибка при обработке TXT-файла {file_path}: {str(e)}")
+            print(f"Ошибка при обработке содержимого TXT-файла {file_path}: {str(e)}")
         
         return sales_data
     
@@ -302,77 +352,109 @@ class DatabaseScript:
         else:
             return 'bad'
     
-    def save_sales_data(self, sales_data: list, date: datetime):
+    def save_sales_data(self, sales_data: list, record_date: datetime):
         """
-        Сохранение данных о продажах в базу данных
+        Сохранение исторических данных о продажах в базу данных.
         
-        Удаляет предыдущие записи за те же сутки и сохраняет новые
+        Удаляет все существующие записи за указанную дату и вставляет новые,
+        в соответствии с обновленной структурой таблицы sales_data.
+        Игнорирует неизвестные поля из входных данных и использует значения по умолчанию
+        для обязательных полей, если они отсутствуют.
         
         Parameters
         ----------
         sales_data : list
-            Список данных о продажах
-        date : datetime
-            Дата, для которой сохраняются данные
+            Список словарей с данными о продажах.
+        record_date : datetime
+            Дата, для которой сохраняются данные (будет преобразована в 'YYYY-MM-DD').
         """
         conn = sqlite3.connect(self.DB_PATH)
         cursor = conn.cursor()
         
-        # Удаляем все предыдущие записи за ту же дату (без учета времени)
-        date_only = date.strftime('%Y-%m-%d')
-        cursor.execute("DELETE FROM sales_data WHERE date(date) = ?", (date_only,))
+        # Получаем список колонок из существующей таблицы
+        cursor.execute("PRAGMA table_info(sales_data);")
+        table_columns = {row[1] for row in cursor.fetchall()}  # Множество имен колонок
+        
+        # Преобразуем дату в строковый формат YYYY-MM-DD
+        date_str = record_date.strftime('%Y-%m-%d')
+        
+        # Удаляем все предыдущие записи за эту дату
+        cursor.execute("DELETE FROM sales_data WHERE record_date = ?", (date_str,))
         
         # Вставляем новые данные
-        for data in sales_data:
-            # Преобразуем datetime в строку для JSON сериализации
-            data_for_json = data.copy()
-            if isinstance(data_for_json['date'], datetime):
-                data_for_json['date'] = data_for_json['date'].isoformat()
+        for raw_data in sales_data:
+            # Создаем новый словарь только с известными колонками
+            clean_data = {}
             
-            cursor.execute('''
-                INSERT INTO sales_data 
-                (manager_id, manager_name, date, product_category, plan, fact, percent, status, data_type, raw_data)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            ''', (
-                data['manager_id'],
-                data['manager_name'],
-                data['date'],
-                data['product_category'],
-                data['plan'],
-                data['fact'],
-                data['percent'],
-                data['status'],
-                data['data_type'],
-                json.dumps(data_for_json)
-            ))
-        
-        # Добавляем информацию о дате в таблицу data_dates
-        cursor.execute("INSERT OR REPLACE INTO data_dates (date) VALUES (?)", (date,))
+            # Обязательные поля с значениями по умолчанию
+            clean_data['record_date'] = date_str
+            clean_data['manager_id'] = raw_data.get('manager_id', raw_data.get('name', 'unknown_manager'))
+            clean_data['tab_type'] = raw_data.get('tab_type', 'unknown_tab')
+            clean_data['tab_index'] = raw_data.get('tab_index', 0)
+            clean_data['data_type'] = raw_data.get('data_type', 'manager')
+            
+            # Опциональные числовые поля
+            numeric_fields = [
+                'money_plan', 'money_fact', 'money_percent',
+                'margin_plan', 'margin_fact', 'margin_percent',
+                'realization_plan', 'realization_fact', 'realization_percent',
+                'bm_plan', 'bm_fact', 'bm_percent',
+                'farban_sales_plan', 'farban_sales_fact', 'farban_sales_percent',
+                'farban_weight_plan', 'farban_weight_fact', 'farban_weight_percent',
+                'special_group_plan', 'special_group_fact', 'special_group_percent',
+                'target_percent'
+            ]
+            
+            for field in numeric_fields:
+                value = raw_data.get(field)
+                if value is not None:
+                    try:
+                        clean_data[field] = float(value)
+                    except (ValueError, TypeError):
+                        clean_data[field] = None
+                else:
+                    clean_data[field] = None
+            
+            # Опциональные текстовые поля
+            text_fields = ['special_group', 'group_name']
+            for field in text_fields:
+                clean_data[field] = raw_data.get(field)
+            
+            # Фильтруем только те поля, которые есть в таблице
+            filtered_data = {k: v for k, v in clean_data.items() if k in table_columns}
+            
+            # Подготавливаем SQL-запрос
+            columns = ', '.join(filtered_data.keys())
+            placeholders = ', '.join(['?' for _ in filtered_data])
+            query = f'INSERT INTO sales_data ({columns}) VALUES ({placeholders})'
+            
+            cursor.execute(query, list(filtered_data.values()))
         
         conn.commit()
         conn.close()
     
     def update_managers_table(self, sales_data: list):
         """
-        Обновление таблицы менеджеров
+        Обновление справочной таблицы менеджеров.
         
         Parameters
         ----------
         sales_data : list
-            Список данных о продажах для извлечения информации о менеджерах
+            Список данных о продажах для извлечения информации о менеджерах.
         """
         conn = sqlite3.connect(self.DB_PATH)
         cursor = conn.cursor()
         
         for data in sales_data:
+            # Извлекаем ID и имя менеджера. Имя может быть в разных ключах.
+            manager_id = data.get('manager_id', 'unknown_id')
+            manager_name = data.get('manager_name', data.get('name', 'Unknown Manager'))
+            department = data.get('data_type', 'Unknown')
+            
             cursor.execute('''
-                INSERT OR IGNORE INTO managers (id, name, department)
+                INSERT OR REPLACE INTO managers (id, current_name, department)
                 VALUES (?, ?, ?)
-            ''', (
-                data['manager_id'],
-                data['manager_name'],
-                data['data_type']
-            ))
+            ''', (manager_id, manager_name, department))
         
         conn.commit()
         conn.close()
@@ -436,12 +518,12 @@ class DatabaseScript:
         Returns
         -------
         list
-            Список дат, для которых есть данные в базе
+            Список дат (в формате 'YYYY-MM-DD'), для которых есть данные в базе
         """
         conn = sqlite3.connect(self.DB_PATH)
         cursor = conn.cursor()
         
-        cursor.execute("SELECT DISTINCT date(date) FROM sales_data ORDER BY date")
+        cursor.execute("SELECT DISTINCT record_date FROM sales_data ORDER BY record_date DESC")
         dates = [row[0] for row in cursor.fetchall()]
         
         conn.close()
