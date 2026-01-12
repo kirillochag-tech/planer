@@ -1,0 +1,21 @@
+{
+    "database": {
+        "local_path": "central_database.db",
+        "network_path": "//192.168.0.201/w/ftp/Logg/Input/central_database.db"
+    },
+    "directories": {
+        "source": "//192.168.0.201/w/ftp/Logg/Input",
+        "cache": "E:\\server_script\\files"
+    },
+    "files": {
+        "Managers_OP": "Plan_26BK.xml",
+        "Managers_Home": "Plan.xml",
+        "BrandManagers_OP": "Brend_26BK.txt",
+        "BrandManagers_Home": "BrendOX.txt",
+        "BrandManagers_Farban": "Brend_Farben.xml"
+    },
+    "processing": {
+        "check_file_modification": true,
+        "delete_old_records_same_day": true
+    }
+}
