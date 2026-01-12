@@ -132,8 +132,22 @@ class DatabaseManager:
             Список доступных дат, отсортированный по убыванию (самые свежие первыми)
         """
         try:
+            # Отладка: выводим путь к БД
+            print(f"[DEBUG] DatabaseManager: Пытаюсь получить даты из БД: {self.db_path}")
+            
+            # Проверяем, существует ли файл
+            if not os.path.exists(self.db_path):
+                print(f"[DEBUG] ОШИБКА: Файл БД НЕ СУЩЕСТВУЕТ по пути: {self.db_path}")
+                return []
+            
             with self._get_connection() as conn:
                 cursor = conn.cursor()
+                
+                # Отладка: проверяем наличие таблицы
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sales_data';")
+                if not cursor.fetchone():
+                    print(f"[DEBUG] ОШИБКА: Таблица 'sales_data' ОТСУТСТВУЕТ в БД: {self.db_path}")
+                    return []
                 
                 cursor.execute('''
                     SELECT DISTINCT record_date 
@@ -142,13 +156,26 @@ class DatabaseManager:
                     LIMIT ?
                 ''', (limit,))
                 
+                raw_results = cursor.fetchall()
+                print(f"[DEBUG] Получено {len(raw_results)} сырых записей из sales_data")
+                
                 dates = []
-                for row in cursor.fetchall():
+                for row in raw_results:
                     if row[0]:
-                        dates.append(datetime.strptime(row[0], '%Y-%m-%d').date())
+                        try:
+                            parsed_date = datetime.strptime(row[0], '%Y-%m-%d').date()
+                            dates.append(parsed_date)
+                        except ValueError as ve:
+                            print(f"[DEBUG] ОШИБКА парсинга даты '{row[0]}': {ve}")
+                    else:
+                        print(f"[DEBUG] Найдена запись с пустой датой: {row}")
+                
+                print(f"[DEBUG] Успешно преобразовано {len(dates)} дат")
                 return dates
         except Exception as e:
-            print(f"Ошибка при получении списка дат: {e}")
+            print(f"[DEBUG] КРИТИЧЕСКАЯ ОШИБКА при получении списка дат: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def get_managers_list(self, record_date: date = None) -> List[str]:
