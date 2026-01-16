@@ -132,8 +132,22 @@ class DatabaseManager:
             Список доступных дат, отсортированный по убыванию (самые свежие первыми)
         """
         try:
+            # Отладка: выводим путь к БД
+            print(f"[DEBUG] DatabaseManager: Пытаюсь получить даты из БД: {self.db_path}")
+            
+            # Проверяем, существует ли файл
+            if not os.path.exists(self.db_path):
+                print(f"[DEBUG] ОШИБКА: Файл БД НЕ СУЩЕСТВУЕТ по пути: {self.db_path}")
+                return []
+            
             with self._get_connection() as conn:
                 cursor = conn.cursor()
+                
+                # Отладка: проверяем наличие таблицы
+                cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='sales_data';")
+                if not cursor.fetchone():
+                    print(f"[DEBUG] ОШИБКА: Таблица 'sales_data' ОТСУТСТВУЕТ в БД: {self.db_path}")
+                    return []
                 
                 cursor.execute('''
                     SELECT DISTINCT record_date 
@@ -142,13 +156,26 @@ class DatabaseManager:
                     LIMIT ?
                 ''', (limit,))
                 
+                raw_results = cursor.fetchall()
+                print(f"[DEBUG] Получено {len(raw_results)} сырых записей из sales_data")
+                
                 dates = []
-                for row in cursor.fetchall():
+                for row in raw_results:
                     if row[0]:
-                        dates.append(datetime.strptime(row[0], '%Y-%m-%d').date())
+                        try:
+                            parsed_date = datetime.strptime(row[0], '%Y-%m-%d').date()
+                            dates.append(parsed_date)
+                        except ValueError as ve:
+                            print(f"[DEBUG] ОШИБКА парсинга даты '{row[0]}': {ve}")
+                    else:
+                        print(f"[DEBUG] Найдена запись с пустой датой: {row}")
+                
+                print(f"[DEBUG] Успешно преобразовано {len(dates)} дат")
                 return dates
         except Exception as e:
-            print(f"Ошибка при получении списка дат: {e}")
+            print(f"[DEBUG] КРИТИЧЕСКАЯ ОШИБКА при получении списка дат: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def get_managers_list(self, record_date: date = None) -> List[str]:
@@ -213,6 +240,8 @@ class DatabaseManager:
                 query = '''
                     SELECT 
                         m.current_name as manager,
+                        sd.cut_manager,
+                        sd.tab_type,
                         sd.money_plan, sd.money_fact, sd.money_percent,
                         sd.margin_plan, sd.margin_fact, sd.margin_percent,
                         sd.realization_plan, sd.realization_fact, sd.realization_percent,
@@ -220,7 +249,7 @@ class DatabaseManager:
                         sd.farban_sales_plan, sd.farban_sales_fact, sd.farban_sales_percent,
                         sd.farban_weight_plan, sd.farban_weight_fact, sd.farban_weight_percent,
                         sd.special_group, sd.special_group_plan, sd.special_group_fact, sd.special_group_percent,
-                        sd.tab_type, sd.tab_index, sd.data_type, sd.group_name,
+                        sd.tab_index, sd.data_type, sd.group_name,
                         sd.target_percent
                     FROM sales_data sd
                     JOIN managers m ON sd.manager_id = m.id
@@ -235,24 +264,38 @@ class DatabaseManager:
                 query += ' ORDER BY sd.tab_index, m.current_name'
                 cursor.execute(query, params)
                 
+                raw_results = cursor.fetchall()
+                print(f"[DEBUG] get_historical_data_by_date: Найдено {len(raw_results)} записей для даты {record_date} и фильтра '{tab_type_filter}'")
+                
                 results = []
-                for row in cursor.fetchall():
+                for i, row in enumerate(raw_results):
                     record = {
                         'manager': row[0],
-                        'money_plan': row[1], 'money_fact': row[2], 'money_percent': row[3],
-                        'margin_plan': row[4], 'margin_fact': row[5], 'margin_percent': row[6],
-                        'realization_plan': row[7], 'realization_fact': row[8], 'realization_percent': row[9],
-                        'bm_plan': row[10], 'bm_fact': row[11], 'bm_percent': row[12],
-                        'farban_sales_plan': row[13], 'farban_sales_fact': row[14], 'farban_sales_percent': row[15],
-                        'farban_weight_plan': row[16], 'farban_weight_fact': row[17], 'farban_weight_percent': row[18],
-                        'special_group': row[19], 'special_group_plan': row[20], 'special_group_fact': row[21], 'special_group_percent': row[22],
-                        'tab_type': row[23], 'tab_index': row[24], 'data_type': row[25], 'group_name': row[26],
-                        'target_percent': row[27]
+                        'cut_manager': row[1],
+                        'tab_type': row[2],
+                        'money_plan': row[3], 'money_fact': row[4], 'money_percent': row[5],
+                        'margin_plan': row[6], 'margin_fact': row[7], 'margin_percent': row[8],
+                        'realization_plan': row[9], 'realization_fact': row[10], 'realization_percent': row[11],
+                        'bm_plan': row[12], 'bm_fact': row[13], 'bm_percent': row[14],
+                        'farban_sales_plan': row[15], 'farban_sales_fact': row[16], 'farban_sales_percent': row[17],
+                        'farban_weight_plan': row[18], 'farban_weight_fact': row[19], 'farban_weight_percent': row[20],
+                        'special_group': row[21], 'special_group_plan': row[22], 'special_group_fact': row[23], 'special_group_percent': row[24],
+                        'tab_index': row[25], 'data_type': row[26], 'group_name': row[27],
+                        'target_percent': row[28]
                     }
+                    # Отладка: выводим первые 2 записи
+                    if i < 2:
+                        print(f"[DEBUG] Запись {i+1}: Менеджер='{record['manager']}', Тип='{record['tab_type']}', Деньги_факт={record['money_fact']}, BM_факт={record['bm_fact']}")
                     results.append(record)
+                
+                if not results:
+                    print(f"[DEBUG] ВНИМАНИЕ: Не найдено ни одной записи для отображения!")
+                
                 return results
         except Exception as e:
-            print(f"Ошибка при получении исторических данных: {e}")
+            print(f"[DEBUG] ОШИБКА в get_historical_data_by_date: {e}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def get_historical_data_by_manager(self, manager_name: str, 
