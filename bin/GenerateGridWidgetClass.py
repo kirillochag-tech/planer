@@ -135,18 +135,59 @@ class GenerateWidgets(QObject):
 
     def _update_main_window_title(self):
         """Обновляет заголовок главного окна с датой и требуемым процентом."""
-
-        __get_datas = Get_Files(self.root.tabs, self.active_tab_index)
-        __dct = __get_datas.get_files()
-
-        if not (__dct and __dct.get('file')):
-            title = "Планерка"
+        
+        if self.historical_date:
+            # Работаем с историческими данными
+            from bin.database_manager import DatabaseManager
+            from bin.history_converter import history_converter
+            
+            db_manager = DatabaseManager()
+            
+            # Определяем тип вкладки для получения соответствующих исторических данных
+            tab_types = {
+                0: 'managers_26bk',      # Менеджеры ОП
+                4: 'managers_home',      # Менеджеры Home
+                1: 'brand_managers_26bk', # Бренд-менеджеры ОП
+                5: 'brand_managers_home', # Бренд-менеджеры Home
+                2: 'brand_managers_farban' # Бренд-менеджеры Farban
+            }
+            
+            tab_type = tab_types.get(self.active_tab_index, '')
+            
+            if tab_type:
+                # Получаем исторические данные для определения процента выполнения
+                historical_records = db_manager.get_historical_data_by_date(self.historical_date, tab_type)
+                
+                # Извлекаем target_percent из первой записи (он должен быть одинаковым для всех)
+                target_percent = "0"
+                if historical_records:
+                    raw_percent = historical_records[0].get('target_percent')
+                    if raw_percent is not None and raw_percent != '':
+                        try:
+                            # Преобразуем к числу и обратно к строке для форматирования
+                            target_percent = str(float(raw_percent))
+                        except (ValueError, TypeError):
+                            target_percent = "0"
+                
+                # Формируем заголовок с исторической датой и процентом
+                formatted_date = self.historical_date.strftime('%d.%m.%Y')
+                title = (f"[ Данные на: {formatted_date} ]"
+                         f"    [ Требуемый % выполнения: {target_percent} ]")
+            else:
+                title = "Планерка [Исторические данные]"
         else:
-            file_path = __dct['file']
-            target_percent = __dct['percent'] or "0"
-            last_modified = self._get_file_last_modified(file_path)
-            title = (f"[ Данные на: {last_modified} ]"
-                     f"    [ Требуемый % выполнения: {target_percent} ]")
+            # Работаем с текущими данными
+            __get_datas = Get_Files(self.root.tabs, self.active_tab_index)
+            __dct = __get_datas.get_files()
+
+            if not (__dct and __dct.get('file')):
+                title = "Планерка"
+            else:
+                file_path = __dct['file']
+                target_percent = __dct['percent'] or "0"
+                last_modified = self._get_file_last_modified(file_path)
+                title = (f"[ Данные на: {last_modified} ]"
+                         f"    [ Требуемый % выполнения: {target_percent} ]")
 
         self.win_roots.setWindowTitle(title)
 
@@ -351,7 +392,7 @@ class GenerateWidgets(QObject):
                         else:
                             value = self.value_format(getattr(row, field_name))
 
-                        obj = QLabel(str(formatted_value))
+                        obj = QLabel(str(value))
                         obj.setStyleSheet(self._get_plan_label_style())
                         obj.setSizePolicy(QSizePolicy.Expanding,
                                           QSizePolicy.Expanding)
